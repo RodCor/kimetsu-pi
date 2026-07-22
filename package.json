@@ -1,0 +1,25 @@
+{
+  "name": "kimetsu-pi",
+  "version": "0.1.0",
+  "description": "Kimetsu brain as a Pi.dev package — persistent cross-session memory for the Pi coding agent.",
+  "keywords": ["pi-package", "pi", "kimetsu", "memory", "extension", "skill"],
+  "homepage": "https://github.com/RodCor/kimetsu-pi#readme",
+  "repository": { "type": "git", "url": "git+https://github.com/RodCor/kimetsu-pi.git" },
+  "license": "MIT OR Apache-2.0",
+  "type": "module",
+  "pi": {
+    "extensions": ["./extensions"],
+    "skills": ["./skills"]
+  },
+  "files": ["extensions/", "skills/", "README.md", "LICENSE"],
+  "engines": { "node": ">=16" },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^2.0.0"
+  }
+}
