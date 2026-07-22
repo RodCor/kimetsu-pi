@@ -1,1 +1,3 @@
 node_modules/
+.superpowers/
+.npm-install.log
