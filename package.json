@@ -1,6 +1,6 @@
 {
   "name": "kimetsu-pi",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Kimetsu brain as a Pi.dev package — persistent cross-session memory for the Pi coding agent.",
   "keywords": ["pi-package", "pi", "kimetsu", "memory", "extension", "skill"],
   "homepage": "https://github.com/RodCor/kimetsu-pi#readme",

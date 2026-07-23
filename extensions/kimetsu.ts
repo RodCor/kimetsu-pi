@@ -8,16 +8,32 @@ import { spawn } from "node:child_process";
 
 function kimetsuExec(args: string[]): Promise<void> {
   return new Promise((resolve) => {
+    let settled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const done = () => {
+      if (settled) return;
+      settled = true;
+      if (timer !== undefined) clearTimeout(timer);
+      resolve();
+    };
     try {
       const child = spawn("kimetsu", args, {
         stdio: "ignore",
         shell: false,
         windowsHide: true,
       });
-      child.on("error", () => resolve()); // binary not on PATH — silent no-op
-      child.on("close", () => resolve());
+      // A hung binary must never stall the lifecycle hook: cap the wait and
+      // kill the child if it overruns. unref() so the timer alone can't keep
+      // the host process alive.
+      timer = setTimeout(() => {
+        child.kill();
+        done();
+      }, 10000);
+      if (typeof timer.unref === "function") timer.unref();
+      child.on("error", done); // binary not on PATH — silent no-op
+      child.on("close", done); // finished, or killed by the timeout above
     } catch {
-      resolve(); // any unexpected error — silent no-op
+      done(); // any unexpected error — silent no-op
     }
   });
 }
