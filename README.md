@@ -24,7 +24,8 @@ Pi has no MCP layer, so this package brings Kimetsu to Pi through Pi's own
 extension points:
 
 - **Extension** (`extensions/kimetsu.ts`) — a TypeScript Pi extension that hooks
-  Pi lifecycle events (`session_start`, `agent_end`, `session_shutdown`) and shells
+  Pi lifecycle events (`session_start`, `before_agent_start`, `agent_end`,
+  `session_shutdown`) and shells
   out to the `kimetsu` binary to warm, load, and persist brain context around each
   session. Each call is capped by a timeout, so a slow or hung binary never stalls
   Pi. If the binary is not on `PATH`, every hook silently no-ops and Pi is
@@ -55,9 +56,15 @@ extension points:
 | **13×** | cheaper per solved task ($0.19 vs $2.47 on a Terminal-Bench slice) |
 | **~1M** | memories in ~3 GB RAM with sub-2s retrieval, one SQLite file |
 
-## Prerequisite
+## Prerequisites
 
-The `kimetsu` binary must be on `PATH`. Install it with:
+Install current Pi (Node.js 22.19 or newer):
+
+```sh
+npm install -g @earendil-works/pi-coding-agent
+```
+
+The `kimetsu` v2.7.0 or newer binary must be on `PATH`. Install it with:
 
 ```sh
 npm install -g kimetsu-ai
@@ -77,9 +84,15 @@ pi install npm:kimetsu-pi
 
 | Pi lifecycle event | Kimetsu command run |
 | --- | --- |
-| `session_start` | `kimetsu brain warm` then `kimetsu brain context-hook` |
+| `session_start` | `kimetsu brain warm` |
+| `before_agent_start` | `kimetsu brain context-hook --warm-on-first-prompt` |
 | `agent_end` | `kimetsu brain stop-hook` |
 | `session_shutdown` | `kimetsu brain session-end-hook` |
+
+The extension uses Pi's `SessionManager` identity, so `/new`, `/resume`, and
+`/fork` keep separate Kimetsu warm-start and deduplication state. It also passes
+Pi's persisted JSONL transcript to the stop and session-end hooks, enabling
+Kimetsu's configured distiller and automatic work-episode capture.
 
 ## Development
 

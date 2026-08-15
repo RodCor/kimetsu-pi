@@ -9,4 +9,8 @@ describe("pi package manifest", () => {
     expect(pkg.pi.extensions).toEqual(["./extensions"]);
     expect(pkg.pi.skills).toEqual(["./skills"]);
   });
+  it("tracks the current Pi runtime contract", () => {
+    expect(pkg.engines.node).toBe(">=22.19.0");
+    expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("*");
+  });
 });

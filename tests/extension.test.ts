@@ -140,6 +140,20 @@ describe("kimetsu pi extension", () => {
     });
   });
 
+  it("uses Pi's current SessionManager id for distinct sessions", async () => {
+    const child = respondingChild(HOOK_OUTPUT);
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    await cbs["before_agent_start"](
+      { prompt: "why is the build red" },
+      {
+        sessionId: "legacy-id",
+        sessionManager: { getSessionId: () => "pi-session-84" },
+      },
+    );
+    expect(JSON.parse(child.stdinWrites[0] as string).session_id).toBe("pi-session-84");
+  });
+
   it("returns the hook's additionalContext as an injected message", async () => {
     spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
     const cbs = register();
@@ -176,5 +190,45 @@ describe("kimetsu pi extension", () => {
     const cbs = register();
     await expect(cbs["before_agent_start"]({ prompt: "why is the build red" }, {}))
       .resolves.toBeUndefined();
+  });
+
+  it("passes Pi's persisted transcript to Kimetsu lifecycle hooks", async () => {
+    const stop = respondingChild("");
+    const shutdown = respondingChild("");
+    spawnMock.mockImplementationOnce(() => stop).mockImplementationOnce(() => shutdown);
+    const cbs = register();
+    const ctx = {
+      cwd: "/repo",
+      sessionManager: {
+        getSessionId: () => "pi-session-84",
+        getSessionFile: () => "/sessions/pi-session-84.jsonl",
+      },
+    };
+
+    await cbs["agent_end"]({ messages: [{ role: "assistant", content: "done" }] }, ctx);
+    await cbs["session_shutdown"]({}, ctx);
+
+    expect(JSON.parse(stop.stdinWrites[0] as string)).toEqual({
+      session_id: "pi-session-84",
+      transcript_path: "/sessions/pi-session-84.jsonl",
+    });
+    expect(JSON.parse(shutdown.stdinWrites[0] as string)).toEqual({
+      session_id: "pi-session-84",
+      transcript_path: "/sessions/pi-session-84.jsonl",
+    });
+  });
+
+  it("falls back to Pi's inline messages for an ephemeral session", async () => {
+    const child = respondingChild("");
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    const messages = [{ role: "assistant", content: "done" }];
+
+    await cbs["agent_end"]({ messages }, { sessionId: "ephemeral" });
+
+    expect(JSON.parse(child.stdinWrites[0] as string)).toEqual({
+      session_id: "ephemeral",
+      transcript: messages,
+    });
   });
 });
