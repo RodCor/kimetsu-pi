@@ -8,5 +8,7 @@ describe("kimetsu-brain skill", () => {
     expect(m).not.toBeNull();
     expect(m![1]).toContain("name: kimetsu-brain");
     expect(m![1]).toMatch(/description: .+/);
+    expect(md).toContain("kimetsu brain memory add --scope project");
+    expect(md).not.toContain("kimetsu brain record");
   });
 });
