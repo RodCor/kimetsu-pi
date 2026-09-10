@@ -11,51 +11,55 @@
 **kimetsu-pi** brings [Kimetsu](https://kimetsu.dev) — a local-first memory brain
 for coding agents — to the [Pi](https://pi.dev) coding agent.
 
-Coding agents are brilliant and forgetful: every session starts from zero. Kimetsu
-is a sidecar brain that captures the lessons your agent earns, learns which ones
-actually help, and hands them back before the next task. The memory pipeline makes
-**no LLM calls** — storage and retrieval are 100% local, free, and offline-capable.
+Kimetsu carries useful lessons between sessions and retrieves relevant project
+knowledge before a task. Storage and retrieval run locally without LLM API calls.
+Automatic lesson extraction can use a configured model; its cost and connectivity
+depend on that configuration.
 
 Learn more at **[kimetsu.dev](https://kimetsu.dev)**.
 
 ## What it is
 
-Pi has no MCP layer, so this package brings Kimetsu to Pi through Pi's own
-extension points:
+This package connects Kimetsu through Pi's native extension and skill interfaces:
 
 - **Extension** (`extensions/kimetsu.ts`) — a TypeScript Pi extension that hooks
-  Pi lifecycle events (`session_start`, `before_agent_start`, `agent_end`,
-  `session_shutdown`) and shells
-  out to the `kimetsu` binary to warm, load, and persist brain context around each
-  session. Interactive hooks have a 10-second timeout; session saving has a
+  Pi lifecycle events and invokes the `kimetsu` binary to warm, load, and persist
+  brain context around each session. Interactive hooks have a 10-second timeout;
+  session saving has a
   separate five-minute limit for model-based distillation. If the binary is not
   on `PATH`, every hook silently no-ops and Pi is
   completely unaffected.
 - **Skill** (`skills/kimetsu-brain/SKILL.md`) — a Pi skill that teaches the agent
-  when and how to consult and record memories during a task.
+  to reuse injected context, correct outdated memories, and cite memories that
+  actually helped during a task.
+
+## What's new in 0.1.4
+
+- Fresh memory per task: older raw injections are excluded from model requests
+  and new summaries, including after corrections, queued user messages, and
+  branch changes.
+- Session saving gets up to five minutes, while interactive hooks retain their
+  10-second limits.
+- Updated guidance for memory reuse, corrections, and usefulness feedback.
+- Verified with Pi 0.85.1 and Kimetsu 2.8.0 on Linux, macOS, and Windows; updated
+  dependencies, isolated integration tests, and protected CI and release gates.
 
 ## Why Kimetsu
 
-- **Remembers what matters** — conventions, failure patterns, the exact command
-  that regenerates your schema. Captured once, retrieved by meaning.
+- **Remembers project knowledge** — conventions, failure patterns, and useful
+  commands stay available across sessions.
 - **Speaks first** — proactive session-start digests, episodic resumes, and
   pre-task context, so the agent's first turn already knows your repo.
-- **Learns what helps** — cited memories get promoted; stale advice decays and is
-  pruned.
-- **Model-free retrieval** — FTS5 + local embeddings + local reranking. Zero API
-  cost, works offline.
-- **Stays yours** — one SQLite file per project. No cloud, no vector DB, no
-  telemetry. Back it up with `cp`.
+- **Learns what helps** — citations provide usefulness feedback; maintenance
+  identifies memories that may need pruning.
+- **Local retrieval** — lexical search in the default lean build, with optional
+  local embeddings and reranking. No LLM API calls for retrieval.
+- **Stays yours** — a local SQLite brain per project, with optional user-wide
+  memory. No hosted vector database is required.
 
-## Benchmarks
-
-| | |
-|---:|---|
-| **89.4%** | LoCoMo, the long-conversation memory benchmark |
-| **83.0%** | LongMemEval, the public long-term-memory benchmark |
-| **73.3%** | BEAM 100K memory benchmark |
-| **13×** | cheaper per solved task ($0.19 vs $2.47 on a Terminal-Bench slice) |
-| **~1M** | memories in ~3 GB RAM with sub-2s retrieval, one SQLite file |
+For Kimetsu's benchmark results, datasets, and evaluation limits, see the
+[core project's benchmark notes](https://github.com/RodCor/kimetsu#benchmarks-vs-other-memory-systems).
+Those evaluate the memory system; this package's CI verifies its Pi integration.
 
 ## Prerequisites
 
@@ -65,7 +69,8 @@ Install current Pi (Node.js 22.19 or newer):
 npm install -g @earendil-works/pi-coding-agent
 ```
 
-The `kimetsu` v2.7.0 or newer binary must be on `PATH`. Install it with:
+The `kimetsu` binary must be on `PATH`. Kimetsu 2.8.0 is the tested release for
+this package; the CLI integration requires at least 2.7.0. Install it with:
 
 ```sh
 npm install -g kimetsu-ai
@@ -80,6 +85,35 @@ absent, the extension silently no-ops and Pi is unaffected.
 ```sh
 pi install npm:kimetsu-pi
 ```
+
+From the Git project whose memory you want to use, initialize Kimetsu if that
+project does not already have a brain:
+
+```sh
+cd /path/to/your/project
+kimetsu init
+kimetsu brain status
+```
+
+Start Pi in that project, or run `/reload` in an existing Pi session to load the
+extension and skill. Confirm installation with `pi list`.
+
+## Upgrade
+
+For an installation that follows the latest npm version:
+
+```sh
+pi update npm:kimetsu-pi
+```
+
+For a pinned installation, select this version explicitly:
+
+```sh
+pi install npm:kimetsu-pi@0.1.4
+```
+
+Then restart Pi or run `/reload`. Pi package updates and Kimetsu CLI updates are
+separate; use `npm install -g kimetsu-ai@latest` if the CLI also needs updating.
 
 ## What it does on each event
 
