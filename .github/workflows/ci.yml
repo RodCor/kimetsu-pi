@@ -8,21 +8,72 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
+    name: test (${{ matrix.os }})
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        include:
+          - os: ubuntu-latest
+            asset: kimetsu-2.8.0-x86_64-unknown-linux-gnu-lean.tar.gz
+            sha256: 08bba882de824bebfc33cdc33313459b086ba5b96f245cfa0159f0411084710b
+          - os: macos-15
+            asset: kimetsu-2.8.0-aarch64-apple-darwin-lean.tar.gz
+            sha256: 84e85f39efe8304254dbc9c2808520c4bb7466fced19d849bfe06f6857ff918e
+          - os: windows-latest
+            asset: kimetsu-2.8.0-x86_64-pc-windows-msvc-lean.zip
+            sha256: 4b6461139e2a4df9771a0ae99b3ac184259d4e42dcc100a2ee623edfa76d59aa
     runs-on: ${{ matrix.os }}
+    env:
+      KIMETSU_INTEGRATION_REQUIRED: "1"
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          node-version: "22"
+          persist-credentials: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22.19.0"
           cache: npm
       - run: npm ci
+      - name: Install checksum-pinned Kimetsu CLI in runner temp
+        shell: pwsh
+        env:
+          CLI_ASSET: ${{ matrix.asset }}
+          CLI_SHA256: ${{ matrix.sha256 }}
+        run: |
+          $cliDir = Join-Path $env:RUNNER_TEMP "kimetsu-cli"
+          New-Item -ItemType Directory -Path $cliDir | Out-Null
+          $archive = Join-Path $cliDir $env:CLI_ASSET
+          Invoke-WebRequest "https://github.com/RodCor/kimetsu/releases/download/v2.8.0/$env:CLI_ASSET" -OutFile $archive
+          if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CLI_SHA256) { throw "Kimetsu archive checksum mismatch" }
+          if ($archive.EndsWith('.zip')) {
+            Expand-Archive -LiteralPath $archive -DestinationPath $cliDir
+          } else {
+            tar -xzf $archive -C $cliDir
+            if ($LASTEXITCODE -ne 0) { throw "Kimetsu archive extraction failed" }
+          }
+          $binaries = @(Get-ChildItem -LiteralPath $cliDir -Recurse -File | Where-Object { $_.Name -in @('kimetsu', 'kimetsu.exe') })
+          if ($binaries.Count -ne 1) { throw "Expected exactly one Kimetsu executable" }
+          "KIMETSU_TEST_BINARY=$($binaries[0].FullName)" >> $env:GITHUB_ENV
       - run: npm run typecheck
       - run: npm test
       - run: npm audit --audit-level=high
       - run: npm pack --dry-run
+
+  required-checks:
+    name: required checks
+    if: always()
+    needs: [test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Require every platform to pass
+        env:
+          TEST_RESULT: ${{ needs.test.result }}
+        run: test "$TEST_RESULT" = success

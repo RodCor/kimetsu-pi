@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from "vitest";
+import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 
 // Controllable spawn mock: each test sets the child's behaviour.
 const spawnMock = vi.fn();
@@ -59,6 +59,16 @@ function register() {
   return cbs;
 }
 
+// Pi leaves messages unchanged when no context handler is registered.
+async function modelMessages(cbs: ReturnType<typeof register>, messages: any[], ctx: any = {}) {
+  const result: any = await cbs["context"]?.({ messages }, ctx);
+  return result?.messages ?? messages;
+}
+
+function persistedMessage(result: any) {
+  return { role: "custom", ...result.message, timestamp: 1 };
+}
+
 const HOOK_OUTPUT = JSON.stringify({
   continue: true,
   hookSpecificOutput: {
@@ -71,8 +81,12 @@ beforeEach(() => {
   spawnMock.mockReset();
 });
 
+afterEach(() => {
+  vi.useRealTimers();
+});
+
 describe("kimetsu pi extension", () => {
-  it("registers the four lifecycle handlers", () => {
+  it("registers lifecycle and context handlers", () => {
     spawnMock.mockImplementation(() => makeChild());
     const registered: string[] = [];
     const pi = { on: (ev: string, _cb: unknown) => registered.push(ev) };
@@ -80,6 +94,10 @@ describe("kimetsu pi extension", () => {
     expect(registered).toEqual([
       "session_start",
       "before_agent_start",
+      "context",
+      "session_before_compact",
+      "session_before_tree",
+      "session_tree",
       "agent_end",
       "session_shutdown",
     ]);
@@ -160,6 +178,153 @@ describe("kimetsu pi extension", () => {
     const result: any = await cbs["before_agent_start"]({ prompt: "why is the build red" }, {});
     expect(result?.message?.customType).toBe("kimetsu-brain");
     expect(result?.message?.content).toContain("use thiserror");
+  });
+
+  it("replaces earlier injections while preserving conversation and other extensions", async () => {
+    spawnMock.mockImplementationOnce(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const old = persistedMessage(await cbs["before_agent_start"]({ prompt: "old build guidance" }, {}));
+    spawnMock.mockImplementationOnce(() => respondingChild(HOOK_OUTPUT.replace("use thiserror", "use anyhow")));
+    const current = persistedMessage(await cbs["before_agent_start"]({ prompt: "corrected build guidance" }, {}));
+    const user = { role: "user", content: "fix the build", timestamp: 2 };
+    const other = { role: "custom", customType: "another-extension", content: "keep this", display: false, timestamp: 3 };
+    const legacy = { role: "custom", customType: "kimetsu-brain", content: "legacy memory", display: false, timestamp: 0 };
+    const history = [legacy, old, user, other, current];
+
+    // Pi passes a deep copy on every model call, including tool continuations.
+    expect(await modelMessages(cbs, structuredClone(history))).toEqual([user, other, current]);
+    expect(await modelMessages(cbs, structuredClone(history))).toEqual([user, other, current]);
+    expect(history).toEqual([legacy, old, user, other, current]);
+  });
+
+  it.each(["", "not hook JSON"])("removes old injections when the next retrieval returns %j", async (stdout) => {
+    spawnMock.mockImplementationOnce(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const old = persistedMessage(await cbs["before_agent_start"]({ prompt: "old build guidance" }, {}));
+    spawnMock.mockImplementationOnce(() => respondingChild(stdout));
+    await cbs["before_agent_start"]({ prompt: "a different task" }, {});
+    expect(await modelMessages(cbs, [old])).toEqual([]);
+  });
+
+  it("does not reactivate a prior injection when a session is resumed", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const ctx = { sessionId: "resumed-session" };
+    const old = persistedMessage(await cbs["before_agent_start"]({ prompt: "old build guidance" }, ctx));
+    await cbs["session_start"]({ reason: "resume" }, ctx);
+    expect(await modelMessages(cbs, [old], ctx)).toEqual([]);
+  });
+
+  it("does not carry an active injection into another session", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const old = persistedMessage(await cbs["before_agent_start"]({ prompt: "old build guidance" }, { sessionId: "one" }));
+    expect(await modelMessages(cbs, [old], { sessionId: "two" })).toEqual([]);
+  });
+
+  it("discards a pending retrieval after the session changes", async () => {
+    const pending = makeChild();
+    spawnMock.mockImplementationOnce(() => pending).mockImplementationOnce(() => respondingChild(""));
+    const cbs = register();
+    const result = cbs["before_agent_start"]({ prompt: "old build guidance" }, { sessionId: "one" });
+    await cbs["session_start"]({ reason: "new" }, { sessionId: "two" });
+    pending.stdoutHandlers["data"]?.(HOOK_OUTPUT);
+    pending.handlers["close"]?.(0);
+    await expect(result).resolves.toBeUndefined();
+  });
+
+  it("expires the injection when a queued user message arrives between tool calls", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const current = persistedMessage(await cbs["before_agent_start"]({ prompt: "old build guidance" }, {}));
+    const tool = { role: "toolResult", toolCallId: "build", toolName: "bash", content: [{ type: "text", text: "passed" }], isError: false, timestamp: 2 };
+    const correction = { role: "user", content: "That guidance is obsolete; use anyhow.", timestamp: 3 };
+    expect(await modelMessages(cbs, [current, tool])).toEqual([current, tool]);
+    expect(await modelMessages(cbs, [current, tool, correction])).toEqual([tool, correction]);
+    // Expiry survives subsequent context trimming or an automatic retry.
+    expect(await modelMessages(cbs, [current, tool])).toEqual([tool]);
+  });
+
+  it("excludes memory injections from new compaction summaries without rewriting history", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const current = persistedMessage(await cbs["before_agent_start"]({ prompt: "build guidance" }, {}));
+    const user = { role: "user", content: "fix the build", timestamp: 2 };
+    const other = { role: "custom", customType: "other-extension", content: "keep", display: false, timestamp: 3 };
+    const history = [current, user, other];
+    const preparation = {
+      messagesToSummarize: history,
+      turnPrefixMessages: [current, user],
+      previousSummary: "An existing summary is left intact.",
+      firstKeptEntryId: "kept-boundary",
+    };
+    await cbs["session_before_compact"]?.({ preparation }, {});
+    expect(preparation.messagesToSummarize).toEqual([user, other]);
+    expect(preparation.turnPrefixMessages).toEqual([user]);
+    expect(preparation.firstKeptEntryId).toBe("kept-boundary");
+    expect(preparation.previousSummary).toBe("An existing summary is left intact.");
+    expect(history).toEqual([current, user, other]);
+  });
+
+  it("excludes injections from branch summaries and expires context on tree navigation", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const current = persistedMessage(await cbs["before_agent_start"]({ prompt: "build guidance" }, {}));
+    const memoryEntry = { type: "custom_message", id: "injection", customType: "kimetsu-brain", content: current.content };
+    const userEntry = { type: "message", id: "user", message: { role: "user", content: "fix build" } };
+    const otherEntry = { type: "custom_message", id: "other", customType: "other-extension", content: "keep" };
+    const entries = [memoryEntry, userEntry, otherEntry];
+    const preparation = { entriesToSummarize: [...entries], targetId: "user" };
+    const summaryInput = preparation.entriesToSummarize;
+    await cbs["session_before_tree"]?.({ preparation }, {});
+    expect(preparation.entriesToSummarize).toEqual([userEntry, otherEntry]);
+    expect(summaryInput).toEqual([userEntry, otherEntry]);
+    expect(entries).toEqual([memoryEntry, userEntry, otherEntry]);
+    await cbs["session_tree"]?.({ newLeafId: "user" }, {});
+    expect(await modelMessages(cbs, [current])).toEqual([]);
+  });
+
+  it("allows session saving to finish after the retrieval deadline", async () => {
+    vi.useFakeTimers();
+    const child = makeChild();
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    let completed = false;
+    const saving = cbs["session_shutdown"]({}, {}).then(() => { completed = true; });
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(completed).toBe(false);
+    expect(child.kill).not.toHaveBeenCalled();
+    child.handlers["close"]?.(0);
+    await saving;
+    expect(completed).toBe(true);
+    await vi.advanceTimersByTimeAsync(300_000);
+    expect(child.kill).not.toHaveBeenCalled();
+  });
+
+  it("still bounds a hung session save", async () => {
+    vi.useFakeTimers();
+    const child = makeChild();
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    let completed = false;
+    const saving = cbs["session_shutdown"]({}, {}).then(() => { completed = true; });
+    await vi.advanceTimersByTimeAsync(299_999);
+    expect(completed).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    await saving;
+    expect(completed).toBe(true);
+    expect(child.kill).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps the short deadline for prompt retrieval", async () => {
+    vi.useFakeTimers();
+    const child = makeChild();
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    const retrieving = cbs["before_agent_start"]({ prompt: "why is the build red" }, {});
+    await vi.advanceTimersByTimeAsync(10_000);
+    await expect(retrieving).resolves.toBeUndefined();
+    expect(child.kill).toHaveBeenCalledTimes(1);
   });
 
   it("requests the first-turn warm start and passes the workspace", async () => {
