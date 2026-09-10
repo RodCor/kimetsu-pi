@@ -4,7 +4,9 @@ import { tmpdir } from "node:os";
 import { join, relative, sep } from "node:path";
 
 export function createTestSandbox(parent: NodeJS.ProcessEnv = process.env) {
-  const root = realpathSync(mkdtempSync(join(tmpdir(), "kimetsu-pi-test-")));
+  // The native Windows resolver expands 8.3 aliases (e.g. RUNNER~1) too.
+  const realPath = realpathSync.native;
+  const root = realPath(mkdtempSync(join(tmpdir(), "kimetsu-pi-test-")));
   const workspace = join(root, "project");
   mkdirSync(workspace);
   // Allow only executable lookup and Windows process essentials. In particular,
@@ -25,15 +27,15 @@ export function createTestSandbox(parent: NodeJS.ProcessEnv = process.env) {
     KIMETSU_USER_BRAIN_DIR: join(root, "user-brain"), KIMETSU_USER_BRAIN: "0", KIMETSU_EMBED_DAEMON: "0",
   });
   const cleanup = () => {
-    if (!root.startsWith(realpathSync(tmpdir()) + sep) || lstatSync(root).isSymbolicLink()) throw new Error("Unsafe test cleanup path");
+    if (!root.startsWith(realPath(tmpdir()) + sep) || lstatSync(root).isSymbolicLink()) throw new Error("Unsafe test cleanup path");
     rmSync(root, { recursive: true, force: true });
   };
   const assertWorkspace = () => {
-    if (realpathSync(workspace) !== workspace || !lstatSync(join(workspace, ".git")).isDirectory() || lstatSync(join(workspace, ".git")).isSymbolicLink()) throw new Error("Unsafe test workspace");
+    if (realPath(workspace) !== workspace || !lstatSync(join(workspace, ".git")).isDirectory() || lstatSync(join(workspace, ".git")).isSymbolicLink()) throw new Error("Unsafe test workspace");
     const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace, env, encoding: "utf8", windowsHide: true }).trim();
     // Git and Node may disagree on the drive letter's case on Windows.
     // path.relative compares paths using the current platform's semantics.
-    if (relative(realpathSync(gitRoot), realpathSync(workspace)) !== "") throw new Error("Unsafe test workspace");
+    if (relative(realPath(gitRoot), realPath(workspace)) !== "") throw new Error(`Unsafe test workspace: Git resolved ${gitRoot}, expected ${workspace}`);
   };
   try {
     execFileSync("git", ["init", "--quiet", "--template=", workspace], { env, windowsHide: true });
