@@ -32,6 +32,11 @@ describe.skipIf(!binary)("real Kimetsu CLI", () => {
     };
     cli("init");
     cli("config", "set", "embedder.enabled", "false");
+    // Session-end launches overdue upkeep detached. Run it synchronously first
+    // so no background writer can race fixture cleanup after the hook exits.
+    const upkeep = JSON.parse(cli("brain", "maintain", "--json"));
+    expect(upkeep.length).toBeGreaterThan(0);
+    expect(upkeep.every((pass: { ok: boolean }) => pass.ok)).toBe(true);
     const oldText = "Orchid production gateway port is 3000.";
     const correctedText = "Orchid production gateway port is 4000.";
     cli("brain", "memory", "add", "--scope", "project", "--kind", "fact", oldText);
@@ -68,6 +73,8 @@ describe.skipIf(!binary)("real Kimetsu CLI", () => {
       usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 } },
     });
     cli("brain", "cite", "--memory-id", memoryId, "--query", prompt, "--note", "The corrected memory answered the port question.");
+    const schedule = JSON.parse(cli("brain", "maintain", "--status", "--json"));
+    expect(schedule.every((pass: { due: boolean }) => !pass.due)).toBe(true);
     await handlers.session_shutdown({}, ctx);
     const resume = cli("resume", "--task-id", session.getSessionId());
     expect(resume).toContain("Saved:");

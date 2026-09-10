@@ -1,7 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { lstatSync, mkdtempSync, mkdirSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, sep } from "node:path";
+import { join, relative, sep } from "node:path";
 
 export function createTestSandbox(parent: NodeJS.ProcessEnv = process.env) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "kimetsu-pi-test-")));
@@ -31,7 +31,9 @@ export function createTestSandbox(parent: NodeJS.ProcessEnv = process.env) {
   const assertWorkspace = () => {
     if (realpathSync(workspace) !== workspace || !lstatSync(join(workspace, ".git")).isDirectory() || lstatSync(join(workspace, ".git")).isSymbolicLink()) throw new Error("Unsafe test workspace");
     const gitRoot = execFileSync("git", ["rev-parse", "--show-toplevel"], { cwd: workspace, env, encoding: "utf8", windowsHide: true }).trim();
-    if (realpathSync(gitRoot) !== realpathSync(workspace)) throw new Error("Unsafe test workspace");
+    // Git and Node may disagree on the drive letter's case on Windows.
+    // path.relative compares paths using the current platform's semantics.
+    if (relative(realpathSync(gitRoot), realpathSync(workspace)) !== "") throw new Error("Unsafe test workspace");
   };
   try {
     execFileSync("git", ["init", "--quiet", "--template=", workspace], { env, windowsHide: true });
