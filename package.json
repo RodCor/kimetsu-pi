@@ -2,27 +2,52 @@
   "name": "kimetsu-pi",
   "version": "0.1.3",
   "description": "Kimetsu brain as a Pi.dev package — local-first, cross-session memory for the Pi coding agent that gets sharper every run.",
-  "keywords": ["pi-package", "pi", "kimetsu", "memory", "brain", "rag", "mcp", "extension", "skill"],
+  "keywords": [
+    "pi-package",
+    "pi",
+    "kimetsu",
+    "memory",
+    "brain",
+    "rag",
+    "mcp",
+    "extension",
+    "skill"
+  ],
   "homepage": "https://kimetsu.dev",
-  "repository": { "type": "git", "url": "git+https://github.com/RodCor/kimetsu-pi.git" },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/RodCor/kimetsu-pi.git"
+  },
   "license": "MIT OR Apache-2.0",
   "type": "module",
   "pi": {
-    "extensions": ["./extensions"],
-    "skills": ["./skills"],
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
     "image": "https://raw.githubusercontent.com/RodCor/kimetsu/main/docs/assets/kimetsu-logo.png"
   },
-  "files": ["extensions/", "skills/", "README.md", "LICENSE"],
-  "engines": { "node": ">=22.19.0" },
+  "files": [
+    "extensions/",
+    "skills/",
+    "README.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=22.19.0"
+  },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:integration": "node scripts/test-integration.mjs"
   },
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "^0.84.2",
     "@types/node": "^26.0.0",
     "typescript": "^7.0.0",
-    "vitest": "^4.1.10"
+    "vitest": "4.1.11"
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
