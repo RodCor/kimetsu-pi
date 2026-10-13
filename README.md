@@ -33,7 +33,15 @@ This package connects Kimetsu through Pi's native extension and skill interfaces
   to reuse injected context, correct outdated memories, and cite memories that
   actually helped during a task.
 
-## What's new in 0.1.4
+## What's new in 0.1.5
+
+- Pi 1.2.0 compatibility: custom-triggered turns expire old memory without
+  treating background notifications as user prompts.
+- Integration tests exercise Pi's real loader, event runner, model-message
+  conversion, and session saving with the Kimetsu 2.8.0 CLI in isolated fixtures.
+- Refreshed development dependencies and removed the source-map-js advisory.
+
+## Previously in 0.1.4
 
 - Fresh memory per task: older raw injections are excluded from model requests
   and new summaries, including after corrections, queued user messages, and
