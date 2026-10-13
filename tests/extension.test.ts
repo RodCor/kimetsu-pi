@@ -86,6 +86,29 @@ afterEach(() => {
 });
 
 describe("kimetsu pi extension", () => {
+  it("expires user memory without retrieving on a Pi custom-triggered turn", async () => {
+    spawnMock.mockImplementation(() => respondingChild(HOOK_OUTPUT));
+    const cbs = register();
+    const old = persistedMessage(await cbs.before_agent_start({ messageType: "user", prompt: "build guidance" }, {}));
+    const custom = { role: "custom", customType: "notification", content: "Background job finished", display: true, timestamp: 2 };
+    const result = await cbs.before_agent_start({ messageType: "custom", message: custom }, {});
+    expect(result).toBeUndefined();
+    expect(await modelMessages(cbs, [old, custom])).toEqual([custom]);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("discards pending user retrieval when a custom turn starts", async () => {
+    const child = makeChild();
+    spawnMock.mockImplementation(() => child);
+    const cbs = register();
+    const pending = cbs.before_agent_start({ messageType: "user", prompt: "build guidance" }, {});
+    await cbs.before_agent_start({ messageType: "custom", message: { content: "notification" } }, {});
+    child.stdoutHandlers.data(HOOK_OUTPUT);
+    child.handlers.close();
+    await expect(pending).resolves.toBeUndefined();
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
   it("registers lifecycle and context handlers", () => {
     spawnMock.mockImplementation(() => makeChild());
     const registered: string[] = [];

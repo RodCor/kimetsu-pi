@@ -1,6 +1,6 @@
 {
   "name": "kimetsu-pi",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "Kimetsu brain as a Pi.dev package — local-first, cross-session memory for the Pi coding agent that gets sharper every run.",
   "keywords": [
     "pi-package",
@@ -44,7 +44,7 @@
     "test:integration": "node scripts/test-integration.mjs"
   },
   "devDependencies": {
-    "@earendil-works/pi-coding-agent": "^0.85.1",
+    "@earendil-works/pi-coding-agent": "1.2.0",
     "@types/node": "^26.0.0",
     "typescript": "^7.0.0",
     "vitest": "5.0.0"
