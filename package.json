@@ -1,6 +1,6 @@
 {
   "name": "kimetsu-pi",
-  "version": "0.1.5",
+  "version": "0.2.0",
   "description": "Kimetsu brain as a Pi.dev package — local-first, cross-session memory for the Pi coding agent that gets sharper every run.",
   "keywords": [
     "pi-package",
@@ -33,6 +33,7 @@
     "extensions/",
     "skills/",
     "README.md",
+    "CHANGELOG.md",
     "LICENSE"
   ],
   "engines": {
@@ -51,5 +52,8 @@
   },
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
+  },
+  "overrides": {
+    "undici": "8.12.4"
   }
 }

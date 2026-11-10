@@ -33,6 +33,15 @@ describe("current Pi runtime", () => {
       "agent_end",
       "session_shutdown",
     ]);
+    expect([...loaded.extensions[0].tools.keys()]).toEqual([
+      "kimetsu_network_status",
+      "kimetsu_network_request",
+    ]);
+    expect([...loaded.extensions[0].commands.keys()]).toEqual([
+      "kimetsu-network-status",
+      "kimetsu-network-request",
+      "kimetsu-network-share",
+    ]);
   });
 
   it("filters the real compaction preparation before Pi sends summary requests", async () => {
