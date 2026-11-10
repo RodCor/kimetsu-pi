@@ -251,10 +251,9 @@ credentials before initialization. Never run integration commands against your
 normal project or home brain.
 
 CI requires the real CLI test on Linux, macOS, and Windows using checksum-pinned
-Kimetsu 2.8.0 binaries (the latest published release) and the minimum supported
-Node version. Those binaries have no `network` command, so CI covers the
-degradation path. Repin the workflow assets to 2.11.0 after that release is
-published if the capable path should run in CI. The `required checks`
+Kimetsu 2.11.0 binaries and the minimum supported Node version. Those binaries
+include the `network` command, so CI runs the peer-network tools against a
+capable CLI. The `required checks`
 gate also requires typechecking, tests, the dependency audit, and package dry-run.
 Release tags must match the package version and point to a commit on `main` with
 successful CI. Wait for that commit's CI before tagging; a release started too
