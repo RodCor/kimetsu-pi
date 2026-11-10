@@ -16,9 +16,11 @@ import extension from "../extensions/kimetsu.ts";
 function makeChild() {
   const handlers: Record<string, (...a: unknown[]) => void> = {};
   const stdoutHandlers: Record<string, (...a: unknown[]) => void> = {};
+  const stderrHandlers: Record<string, (...a: unknown[]) => void> = {};
   const child = {
     handlers,
     stdoutHandlers,
+    stderrHandlers,
     stdinWrites: [] as unknown[],
     kill: vi.fn(),
     stdout: {
@@ -26,6 +28,13 @@ function makeChild() {
       on(ev: string, cb: (...a: unknown[]) => void) {
         stdoutHandlers[ev] = cb;
         return child.stdout;
+      },
+    },
+    stderr: {
+      setEncoding: vi.fn(),
+      on(ev: string, cb: (...a: unknown[]) => void) {
+        stderrHandlers[ev] = cb;
+        return child.stderr;
       },
     },
     stdin: {
@@ -54,9 +63,15 @@ function respondingChild(stdout: string) {
 
 function register() {
   const cbs: Record<string, (e: any, c: any) => Promise<unknown>> = {};
-  const pi = { on: (ev: string, cb: any) => { cbs[ev] = cb; } };
+  const tools = new Map<string, any>();
+  const commands = new Map<string, any>();
+  const pi = {
+    on: (ev: string, cb: any) => { cbs[ev] = cb; },
+    registerTool: (tool: any) => { tools.set(tool.name, tool); },
+    registerCommand: (name: string, options: any) => { commands.set(name, options); },
+  };
   extension(pi as any);
-  return cbs;
+  return Object.assign(cbs, { tools, commands });
 }
 
 // Pi leaves messages unchanged when no context handler is registered.
@@ -112,7 +127,11 @@ describe("kimetsu pi extension", () => {
   it("registers lifecycle and context handlers", () => {
     spawnMock.mockImplementation(() => makeChild());
     const registered: string[] = [];
-    const pi = { on: (ev: string, _cb: unknown) => registered.push(ev) };
+    const pi = {
+      on: (ev: string, _cb: unknown) => registered.push(ev),
+      registerTool: () => {},
+      registerCommand: () => {},
+    };
     extension(pi as any);
     expect(registered).toEqual([
       "session_start",
@@ -418,5 +437,340 @@ describe("kimetsu pi extension", () => {
       session_id: "ephemeral",
       transcript: messages,
     });
+  });
+
+  it("does not contact the peer network while preparing a turn", async () => {
+    spawnMock.mockImplementation(() => respondingChild(""));
+    const cbs = register();
+    await cbs["session_start"]({}, { cwd: "/repo" });
+    await cbs["before_agent_start"]({ prompt: "why is the build red" }, { cwd: "/repo" });
+    const argLists = spawnMock.mock.calls.map((call) => call[1] as string[]);
+    expect(argLists.some((args) => args.includes("network") || args.includes("--version"))).toBe(false);
+  });
+});
+
+const STATUS_JOINED = JSON.stringify({
+  compiled: true,
+  joined: true,
+  listening: false,
+  group: "friends",
+  role: "founder",
+  generation: 2,
+  endpoint_id: "abc",
+});
+
+const REQUEST_OK = JSON.stringify({
+  verified: true,
+  digest: "digest-1",
+  imported: 2,
+  deduped: 1,
+  quarantined: 0,
+  superseded: 0,
+  listening: false,
+});
+
+function versionChild(versionLine: string) {
+  return () => respondingChild(`${versionLine}\n`);
+}
+
+describe("kimetsu peer network", () => {
+  it("registers status and request tools without a share tool", () => {
+    spawnMock.mockImplementation(() => makeChild());
+    const { tools, commands } = register();
+    expect([...tools.keys()]).toEqual(["kimetsu_network_status", "kimetsu_network_request"]);
+    expect([...commands.keys()]).toEqual([
+      "kimetsu-network-status",
+      "kimetsu-network-request",
+      "kimetsu-network-share",
+    ]);
+    expect(tools.get("kimetsu_network_status").annotations).toMatchObject({
+      readOnlyHint: true,
+      openWorldHint: false,
+    });
+    expect(tools.get("kimetsu_network_request").annotations).toMatchObject({
+      readOnlyHint: false,
+      openWorldHint: true,
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("reports an older binary and does not run network", async () => {
+    spawnMock.mockImplementation(versionChild("kimetsu 2.8.0 (lean, +pi, +openclaw)"));
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_status").execute(
+      "call", {}, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe(
+      "Peer network needs Kimetsu 2.11.0 or newer. This binary is 2.8.0 (lean, +pi, +openclaw). Nothing is listening.",
+    );
+    expect(result.details).toMatchObject({ available: false, joined: false, listening: false, compiled: null });
+    expect(spawnMock.mock.calls.map((call) => call[1])).toEqual([["--version"]]);
+  });
+
+  it("reports a missing binary without throwing", async () => {
+    spawnMock.mockImplementation(() => {
+      const child = makeChild();
+      setTimeout(() => child.handlers["error"]?.(), 0);
+      return child;
+    });
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_status").execute(
+      "call", {}, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.content[0].text).toBe("Kimetsu is not on PATH. Nothing is listening.");
+    expect(result.details.listening).toBe(false);
+    expect(spawnMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads status json and does not pass listen or relay flags", async () => {
+    spawnMock
+      .mockImplementationOnce(versionChild("kimetsu 2.11.0 (lean)"))
+      .mockImplementationOnce(() => respondingChild(`${STATUS_JOINED}\n`));
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_status").execute(
+      "call", {}, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.content[0].text).toBe(
+      'Peer network: joined "friends" (founder). Endpoint abc. Nothing is listening.',
+    );
+    expect(result.details).toMatchObject({
+      available: true,
+      compiled: true,
+      joined: true,
+      listening: false,
+      group: "friends",
+      role: "founder",
+      generation: 2,
+      endpoint_id: "abc",
+    });
+    const [bin, args, options] = spawnMock.mock.calls[1] as [string, string[], { stdio: string[]; shell: boolean }];
+    expect(bin).toBe("kimetsu");
+    expect(args).toEqual(["network", "status", "--json"]);
+    expect(options.shell).toBe(false);
+    expect(options.stdio).toEqual(["ignore", "pipe", "pipe"]);
+    expect(args.join(" ")).not.toMatch(/relay|map-ports|share|request/);
+  });
+
+  it("degrades when the build has no peer network and does not request", async () => {
+    const offline = JSON.stringify({ compiled: false, joined: false, listening: false });
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return respondingChild("kimetsu 2.11.0 (lean)\n");
+      return respondingChild(`${offline}\n`);
+    });
+    const { tools } = register();
+    const status = await tools.get("kimetsu_network_status").execute(
+      "call", {}, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(status.content[0].text).toBe("Peer network is not included in this build. Nothing is listening.");
+    expect(status.details).toMatchObject({ available: false, compiled: false, listening: false });
+    const request = await tools.get("kimetsu_network_request").execute(
+      "call",
+      { peer: "abc@127.0.0.1:9" },
+      undefined,
+      undefined,
+      { cwd: "/repo" },
+    );
+    expect(request.isError).toBe(true);
+    expect(request.content[0].text).toBe("Peer network is not included in this build. Nothing is listening.");
+    expect(request.details.listening).toBe(false);
+    const commands = spawnMock.mock.calls.map((call) => (call[1] as string[])[1]);
+    expect(commands).not.toContain("request");
+  });
+
+  it("requests a repo pack only with an explicit peer and the secure defaults", async () => {
+    spawnMock
+      .mockImplementationOnce(versionChild("kimetsu 2.11.0 (lean)"))
+      .mockImplementationOnce(() => respondingChild(`${JSON.stringify({ compiled: true, joined: true, listening: false })}\n`))
+      .mockImplementationOnce(() => respondingChild(`${REQUEST_OK}\n`));
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_request").execute(
+      "call",
+      { peer: " abc@127.0.0.1:9 " },
+      undefined,
+      undefined,
+      { cwd: "/repo" },
+    );
+    expect(result.isError).toBeFalsy();
+    expect(result.content[0].text).toBe(
+      "Verified the signature. Imported 2, already had 1, quarantined 0, superseded 0. Nothing is listening now.",
+    );
+    expect(result.details).toMatchObject({
+      available: true,
+      verified: true,
+      listening: false,
+      imported: 2,
+      deduped: 1,
+      quarantined: 0,
+      superseded: 0,
+      digest: "digest-1",
+    });
+    expect(spawnMock.mock.calls[2][1]).toEqual([
+      "network", "request", "--json", "--no-mdns", "--workspace", "/repo", "--peer", "abc@127.0.0.1:9",
+    ]);
+  });
+
+  it("refuses a request that names neither a peer nor discovery", async () => {
+    spawnMock.mockImplementation(versionChild("kimetsu 2.11.0 (lean)"));
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_request").execute(
+      "call", {}, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe(
+      "Pass peer (endpoint-id@host:port) or set discover to true. Nothing was contacted.",
+    );
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a peer value that could be another flag", async () => {
+    spawnMock.mockImplementation(versionChild("kimetsu 2.11.0 (lean)"));
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_request").execute(
+      "call", { peer: "--map-ports" }, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toContain("Nothing was contacted");
+    expect(spawnMock).not.toHaveBeenCalled();
+  });
+
+  it("enables discovery or port mapping only when the caller sets them", async () => {
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return respondingChild("kimetsu 2.11.0 (lean)\n");
+      if (args[1] === "status") {
+        return respondingChild(`${JSON.stringify({ compiled: true, joined: true, listening: false })}\n`);
+      }
+      return respondingChild(`${REQUEST_OK}\n`);
+    });
+    const { tools } = register();
+    await tools.get("kimetsu_network_request").execute(
+      "call",
+      { discover: true, map_ports: true },
+      undefined,
+      undefined,
+      { cwd: "/repo" },
+    );
+    const requestArgs = spawnMock.mock.calls.map((call) => call[1] as string[]).find((args) => args[1] === "request");
+    expect(requestArgs).toEqual([
+      "network", "request", "--json", "--workspace", "/repo", "--map-ports",
+    ]);
+  });
+
+  it("returns the CLI error when a request cannot reach a peer", async () => {
+    const child = makeChild();
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return respondingChild("kimetsu 2.11.0 (lean)\n");
+      if (args[1] === "status") {
+        return respondingChild(`${JSON.stringify({ compiled: true, joined: false, listening: false })}\n`);
+      }
+      setTimeout(() => {
+        child.stderrHandlers["data"]?.("Error: not on a network. Run `kimetsu network join <code>`. Nothing was contacted.\n");
+        child.handlers["close"]?.(1);
+      }, 0);
+      return child;
+    });
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_request").execute(
+      "call", { peer: "abc@127.0.0.1:9" }, undefined, undefined, { cwd: "/repo" },
+    );
+    expect(result.isError).toBe(true);
+    expect(result.details.verified).toBe(false);
+    expect(result.details.listening).toBe(false);
+    expect(result.content[0].text).toContain("Nothing was contacted");
+  });
+
+  it("kills a hung request after its own deadline and not the retrieval deadline", async () => {
+    vi.useFakeTimers();
+    const version = makeChild();
+    const status = makeChild();
+    const hung = makeChild();
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return version;
+      if (args[1] === "status") return status;
+      return hung;
+    });
+    const { tools } = register();
+    const pending = tools.get("kimetsu_network_request").execute(
+      "call", { peer: "abc@127.0.0.1:9" }, undefined, undefined, { cwd: "/repo" },
+    );
+    version.stdoutHandlers["data"]?.("kimetsu 2.11.0 (lean)\n");
+    version.handlers["close"]?.(0);
+    await Promise.resolve();
+    status.stdoutHandlers["data"]?.(
+      `${JSON.stringify({ compiled: true, joined: true, listening: false })}\n`,
+    );
+    status.handlers["close"]?.(0);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(hung.kill).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(50_000);
+    const result = await pending;
+    expect(hung.kill).toHaveBeenCalledTimes(1);
+    expect(result.isError).toBe(true);
+    expect(result.content[0].text).toBe(
+      "The peer request timed out and the socket was closed. Nothing is listening.",
+    );
+  });
+
+  it("closes the request socket when Pi aborts the call", async () => {
+    const hung = makeChild();
+    const controller = new AbortController();
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return respondingChild("kimetsu 2.11.0 (lean)\n");
+      if (args[1] === "status") {
+        return respondingChild(`${JSON.stringify({ compiled: true, joined: true, listening: false })}\n`);
+      }
+      setTimeout(() => controller.abort(), 0);
+      return hung;
+    });
+    const { tools } = register();
+    const result = await tools.get("kimetsu_network_request").execute(
+      "call", { peer: "abc@127.0.0.1:9" }, controller.signal, undefined, { cwd: "/repo" },
+    );
+    expect(hung.kill).toHaveBeenCalledTimes(1);
+    expect(result.content[0].text).toBe(
+      "The peer request was cancelled and the socket was closed. Nothing is listening.",
+    );
+  });
+
+  it("keeps sharing as an explicit command that does not spawn kimetsu", async () => {
+    spawnMock.mockImplementation(versionChild("kimetsu 2.11.0 (lean)"));
+    const { commands } = register();
+    const notes: string[] = [];
+    await commands.get("kimetsu-network-share").handler("", {
+      cwd: "/repo",
+      ui: { notify: (message: string) => notes.push(message) },
+    });
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(notes).toEqual([
+      "Sharing stays off until you run it yourself. In this project directory, run: kimetsu network share\nThat command listens until you press Ctrl-C. The relay stays off. Only this repo's memories are sent, after they are signed and scrubbed. Do not add --map-ports unless you want the router to open a UDP port. Nothing is listening now.",
+    ]);
+  });
+
+  it("runs a slash-command request with the same secure defaults", async () => {
+    spawnMock.mockImplementation((...call: unknown[]) => {
+      const args = call[1] as string[];
+      if (args[0] === "--version") return respondingChild("kimetsu 2.11.0 (lean)\n");
+      if (args[1] === "status") {
+        return respondingChild(`${JSON.stringify({ compiled: true, joined: true, listening: false })}\n`);
+      }
+      return respondingChild(`${REQUEST_OK}\n`);
+    });
+    const { commands } = register();
+    const notes: Array<{ message: string; type?: string }> = [];
+    await commands.get("kimetsu-network-request").handler("abc@127.0.0.1:9", {
+      cwd: "/repo",
+      ui: { notify: (message: string, type?: string) => notes.push({ message, type }) },
+    });
+    expect(spawnMock.mock.calls.map((call) => call[1])).toContainEqual([
+      "network", "request", "--json", "--no-mdns", "--workspace", "/repo", "--peer", "abc@127.0.0.1:9",
+    ]);
+    expect(notes[0]?.message).toContain("Verified the signature");
+    expect(notes[0]?.type).toBe("info");
   });
 });

@@ -30,10 +30,23 @@ This package connects Kimetsu through Pi's native extension and skill interfaces
   on `PATH`, every hook silently no-ops and Pi is
   completely unaffected.
 - **Skill** (`skills/kimetsu-brain/SKILL.md`) — a Pi skill that teaches the agent
-  to reuse injected context, correct outdated memories, and cite memories that
-  actually helped during a task.
+  to reuse injected context, correct outdated memories, cite memories that
+  actually helped during a task, and use the peer memory network only when
+  asked.
 
-## What's new in 0.1.5
+## What's new in 0.2.0
+
+- Peer network tools for Kimetsu 2.11.0: `kimetsu_network_status` and
+  `kimetsu_network_request`, plus `/kimetsu-network-status`,
+  `/kimetsu-network-request`, and `/kimetsu-network-share`.
+- `kimetsu --version` is checked before any network command. Older binaries,
+  and builds compiled without `network`, explain the gap and leave every
+  socket closed.
+- Sharing stays a terminal command. The extension never starts it. Request
+  listens only while that call runs, with the relay off, discovery off unless
+  asked, and router port mapping off unless asked.
+
+## Previously in 0.1.5
 
 - Pi 1.2.0 compatibility: custom-triggered turns expire old memory without
   treating background notifications as user prompts.
@@ -77,8 +90,10 @@ Install current Pi (Node.js 22.19 or newer):
 npm install -g @earendil-works/pi-coding-agent
 ```
 
-The `kimetsu` binary must be on `PATH`. Kimetsu 2.8.0 is the tested release for
-this package; the CLI integration requires at least 2.7.0. Install it with:
+The `kimetsu` binary must be on `PATH`. Memory hooks work on Kimetsu 2.7.0 and
+newer. This package targets Kimetsu 2.11.0 for the peer network; the extension
+checks `kimetsu --version` and skips network commands on anything older.
+Install Kimetsu with:
 
 ```sh
 npm install -g kimetsu-ai
@@ -117,7 +132,7 @@ pi update npm:kimetsu-pi
 For a pinned installation, select this version explicitly:
 
 ```sh
-pi install npm:kimetsu-pi@0.1.4
+pi install npm:kimetsu-pi@0.2.0
 ```
 
 Then restart Pi or run `/reload`. Pi package updates and Kimetsu CLI updates are
@@ -159,6 +174,59 @@ missing evidence, correct existing memories, and cite only memories that
 actually helped. Run `kimetsu brain status` from the project directory to inspect
 the brain. Automatic model-based distillation requires configuration.
 
+## Peer network
+
+Kimetsu 2.11.0 adds a peer memory network to release and npm builds. Pi has no
+MCP, so this package shells out to the local `kimetsu` binary. Nothing listens
+until `share` or `request` runs. The relay stays off. Packs are signed and
+scrubbed, and only the repo mount is exchanged. An unknown signer is
+quarantined and stays out of retrieval.
+
+Create a network on one machine, then join it on another. These commands write
+keys and do not open a socket:
+
+```sh
+kimetsu network invite
+kimetsu network join <code>
+kimetsu network status
+kimetsu network leave
+```
+
+`invite` prints a join code. The code does not include the admin key. `status`
+reports whether this machine has joined and always leaves listening off.
+
+To send memories, the user runs this in a terminal from the project directory
+and leaves it running until the other machine has fetched the pack:
+
+```sh
+kimetsu network share
+```
+
+That process listens until Ctrl-C. It prints a `peer:` line
+(`endpoint-id@host:port`). The extension does not run `share` for you.
+`/kimetsu-network-share` prints the same instructions and does not open a
+socket. Add `--map-ports` only when you want UPnP or NAT-PMP to open a UDP
+port. That stays off by default.
+
+On the machine that should receive the pack, either ask Pi to call
+`kimetsu_network_request` or run:
+
+```sh
+/kimetsu-network-request <endpoint-id>@host:port
+```
+
+The same fetch from a shell, with discovery and port mapping left off:
+
+```sh
+kimetsu network request --json --no-mdns --peer <endpoint-id>@host:port
+```
+
+`kimetsu_network_status` is the read-only check. Both tools no-op, with an
+explanation, when `kimetsu --version` is older than 2.11.0 or when
+`kimetsu network status --json` reports `"compiled": false`. A request is
+killed if it runs longer than 60 seconds or if Pi cancels the call, so the
+socket does not outlive the command.
+
 ## Development
 
 ```sh
@@ -168,11 +236,14 @@ npm run typecheck
 ```
 
 To run the optional CLI integration test, set `KIMETSU_TEST_BINARY` to the
-absolute path of a Kimetsu 2.8.0+ executable named `kimetsu` (`kimetsu.exe` on
+absolute path of a Kimetsu executable named `kimetsu` (`kimetsu.exe` on
 Windows), then run `npm run test:integration`. This command fails if the binary
 is missing. It creates an isolated temporary brain, uses
 lexical retrieval without model calls, and verifies correction, context
-filtering, citation, and session persistence.
+filtering, citation, and session persistence. It also runs the network status
+and request tools. A binary older than 2.11.0 must degrade without listening.
+A 2.11.0 or newer binary must report `listening: false` from
+`kimetsu network status --json`.
 
 The fixture anchors a new Git repository and gives subprocesses temporary homes,
 caches, and user-brain paths. It removes inherited Git/Kimetsu overrides and
@@ -180,7 +251,10 @@ credentials before initialization. Never run integration commands against your
 normal project or home brain.
 
 CI requires the real CLI test on Linux, macOS, and Windows using checksum-pinned
-Kimetsu 2.8.0 binaries and the minimum supported Node version. The `required checks`
+Kimetsu 2.8.0 binaries (the latest published release) and the minimum supported
+Node version. Those binaries have no `network` command, so CI covers the
+degradation path. Repin the workflow assets to 2.11.0 after that release is
+published if the capable path should run in CI. The `required checks`
 gate also requires typechecking, tests, the dependency audit, and package dry-run.
 Release tags must match the package version and point to a commit on `main` with
 successful CI. Wait for that commit's CI before tagging; a release started too

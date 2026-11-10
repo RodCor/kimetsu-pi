@@ -41,6 +41,9 @@ jobs:
           node-version: "22.19.0"
           cache: npm
       - run: npm ci
+      # Brain integration stays on the latest published CLI (v2.8.0).
+      # Peer-network checks on that binary are the graceful-degradation path.
+      # Repin these assets to v2.11.0 after that release is published.
       - name: Install checksum-pinned Kimetsu CLI in runner temp
         shell: pwsh
         env:

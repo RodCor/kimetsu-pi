@@ -13,4 +13,7 @@ describe("pi package manifest", () => {
     expect(pkg.engines.node).toBe(">=22.19.0");
     expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe("*");
   });
+  it("publishes the peer-network release", () => {
+    expect(pkg.version).toBe("0.2.0");
+  });
 });
