@@ -21,14 +21,14 @@ jobs:
       matrix:
         include:
           - os: ubuntu-latest
-            asset: kimetsu-2.8.0-x86_64-unknown-linux-gnu-lean.tar.gz
-            sha256: 08bba882de824bebfc33cdc33313459b086ba5b96f245cfa0159f0411084710b
+            asset: kimetsu-2.11.0-x86_64-unknown-linux-gnu-lean.tar.gz
+            sha256: bc7ed801647d1c86b9068886df8d23b05c31c0de5da05eb609ead6912083a832
           - os: macos-15
-            asset: kimetsu-2.8.0-aarch64-apple-darwin-lean.tar.gz
-            sha256: 84e85f39efe8304254dbc9c2808520c4bb7466fced19d849bfe06f6857ff918e
+            asset: kimetsu-2.11.0-aarch64-apple-darwin-lean.tar.gz
+            sha256: f57cea91c5f42b3772eaf58550556c09e2ce827a6b802fa5fe0b2c9f7e14a6aa
           - os: windows-latest
-            asset: kimetsu-2.8.0-x86_64-pc-windows-msvc-lean.zip
-            sha256: 4b6461139e2a4df9771a0ae99b3ac184259d4e42dcc100a2ee623edfa76d59aa
+            asset: kimetsu-2.11.0-x86_64-pc-windows-msvc-lean.zip
+            sha256: fe27dc19e1703a55d29b006b350bfe69b974c510b54577a90b5ec6972a6a813c
     runs-on: ${{ matrix.os }}
     env:
       KIMETSU_INTEGRATION_REQUIRED: "1"
@@ -41,9 +41,7 @@ jobs:
           node-version: "22.19.0"
           cache: npm
       - run: npm ci
-      # Brain integration stays on the latest published CLI (v2.8.0).
-      # Peer-network checks on that binary are the graceful-degradation path.
-      # Repin these assets to v2.11.0 after that release is published.
+      # Brain and peer-network integration run against the published Kimetsu v2.11.0 CLI.
       - name: Install checksum-pinned Kimetsu CLI in runner temp
         shell: pwsh
         env:
@@ -53,7 +51,7 @@ jobs:
           $cliDir = Join-Path $env:RUNNER_TEMP "kimetsu-cli"
           New-Item -ItemType Directory -Path $cliDir | Out-Null
           $archive = Join-Path $cliDir $env:CLI_ASSET
-          Invoke-WebRequest "https://github.com/RodCor/kimetsu/releases/download/v2.8.0/$env:CLI_ASSET" -OutFile $archive
+          Invoke-WebRequest "https://github.com/RodCor/kimetsu/releases/download/v2.11.0/$env:CLI_ASSET" -OutFile $archive
           if ((Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant() -ne $env:CLI_SHA256) { throw "Kimetsu archive checksum mismatch" }
           if ($archive.EndsWith('.zip')) {
             Expand-Archive -LiteralPath $archive -DestinationPath $cliDir
